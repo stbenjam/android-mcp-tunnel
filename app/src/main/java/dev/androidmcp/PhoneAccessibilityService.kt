@@ -6,10 +6,16 @@ import android.app.KeyguardManager
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
+import android.view.Gravity
+import android.view.View
+import android.widget.TextView
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import dev.androidmcp.core.*
@@ -20,6 +26,57 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 
 class PhoneAccessibilityService : AccessibilityService() {
+    private val indicatorHandler = Handler(Looper.getMainLooper())
+    private var controlIndicator: View? = null
+    private var activeControls = 0
+    private var indicatorGeneration = 0
+    private val removeIndicator = Runnable { if (activeControls == 0) clearControlIndicator() }
+
+    fun <T> withControlIndicator(action: () -> T): T {
+        val generation = onMain {
+            indicatorHandler.removeCallbacks(removeIndicator)
+            if (controlIndicator == null) {
+                fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+                val banner = TextView(this).apply {
+                    text = "MCP is controlling this phone"
+                    textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
+                    background = GradientDrawable().apply { setColor(Color.rgb(40, 64, 109)); cornerRadius = dp(8).toFloat() }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                }
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT,
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    y = dp(8)
+                    title = "Phone Link remote control indicator"
+                }
+                getSystemService(WindowManager::class.java).addView(banner, params)
+                controlIndicator = banner
+            }
+            activeControls++
+            indicatorGeneration
+        }
+        try { return action() }
+        finally {
+            indicatorHandler.post {
+                if (generation == indicatorGeneration) {
+                    activeControls = (activeControls - 1).coerceAtLeast(0)
+                    if (activeControls == 0) indicatorHandler.postDelayed(removeIndicator, 2000)
+                }
+            }
+        }
+    }
+
+    fun clearControlIndicator() {
+        indicatorHandler.removeCallbacks(removeIndicator)
+        controlIndicator?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        controlIndicator = null; activeControls = 0
+        indicatorGeneration++
+    }
     companion object {
         @Volatile var instance: PhoneAccessibilityService? = null
             private set
@@ -32,6 +89,7 @@ class PhoneAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean { disconnect(); return super.onUnbind(intent) }
     override fun onDestroy() { disconnect(); super.onDestroy() }
     private fun disconnect() {
+        clearControlIndicator()
         if (instance === this) instance = null
         stopService(Intent(this, BridgeService::class.java))
     }
@@ -55,11 +113,11 @@ class PhoneAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun launch(intent: Intent): JSONObject = onMain {
+    fun launch(intent: Intent, message: String = "App opened."): JSONObject = onMain {
         unlocked()
         if (intent.resolveActivity(packageManager) == null) throw ToolFailure("No installed app can handle this action.")
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        obj("status" to "requested", "message" to "The action was handed to Android. The target app controls completion.")
+        obj("status" to "completed", "success" to true, "completion_basis" to "android_accepted", "message" to message)
     }
 
     fun screen(): JSONObject = onMain {

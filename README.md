@@ -4,6 +4,8 @@ A native Android app that exposes phone tools to ChatGPT through **OpenAI Secure
 
 Version 0.2.0 uses Material 3 controls, follows the phone's light/dark theme, and uses dynamic system colors where available. Tunnel credentials are edited in a separate settings dialog.
 
+Version 0.3.0 adds automatic Google Messages/SMS routing, explicit optimistic success responses, a visible control banner, and tools to find the phone, get its location, and control Do Not Disturb.
+
 **Accessibility is mandatory.** Enable Phone Link control before connecting. Revoking Accessibility stops the tunnel. Screen controls and activity launches require an awake, unlocked phone; requests fail with an explanation when the screen is off or the device is locked. There is no per-action confirmation screen added by this app. Android and the destination app can still require user interaction.
 
 ## Install and connect
@@ -12,7 +14,7 @@ Version 0.2.0 uses Material 3 controls, follows the phone's light/dark theme, an
 2. Open **Phone Link → Phone control → Open settings → Phone Link control** and enable it. For a sideloaded APK, Android may first require **App info → ⋮ → Allow restricted settings**. Grant only for an app and tunnel you control.
 3. In [OpenAI Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels), create or select a tunnel. Associate it with the intended ChatGPT workspace. Obtain a runtime key with **Tunnels Read + Use**. Creating a tunnel requires **Tunnels Read + Manage**.
 4. Open **Tunnel settings**, enter the tunnel ID and runtime key **in the Android app**, then save. Do not put credentials in chat, source files, or shell arguments.
-5. Enable the capabilities you want. Contacts, SMS, and calls request their Android runtime permissions. SMS uses the default SMS SIM; select one in Android settings if needed. Android's installer and permission rules may restrict SMS permission on some devices.
+5. Enable the capabilities you want. Contacts, Messaging, calls, and Location request their Android runtime permissions. Do Not Disturb opens Android's special-access settings. Find phone needs no additional runtime permission. SMS uses the default SMS SIM; select one in Android settings if needed. Android's installer and permission rules may restrict SMS permission on some devices.
 6. Tap **Connect** and allow connection notifications. A notification provides a Disconnect action. The app must remain running and online. Device battery restrictions can interrupt long-running connections; adjust them in Android app settings if needed. Reopen and reconnect after a reboot or force-stop.
 7. In **ChatGPT Plugins → Add custom MCP server → Connection: Tunnel**, select this tunnel and finish the private connection setup. Account/workspace permissions determine availability.
 8. Ask ChatGPT to call **device_status**. This is the first complete end-to-end verification. **Connection diagnostics** inside the app shows local activity and cannot by itself verify the ChatGPT caller's connection.
@@ -27,9 +29,13 @@ Official references: [Secure MCP Tunnel](https://developers.openai.com/api/docs/
 | `set_timer` | Ask the clock app to start a labeled countdown (1 second–24 hours). |
 | `set_alarm` | Ask the clock app for a one-time alarm at the next occurrence of an hour/minute in the phone's timezone. |
 | `search_contacts` | Search contacts by name or number; bounded results with names and phone numbers. |
+| `send_message` | One call: direct SMS when locked or the screen is off; Google Messages when awake and unlocked, using its RCS/SMS selection. |
 | `send_sms` | Send SMS from the default SMS SIM, with multipart support and Android send-result callbacks. |
 | `place_call` | Start a call through Android. |
-| `operation_status` | Inspect an earlier alarm, timer, SMS, or call operation without repeating it. |
+| `operation_status` | Inspect an earlier operation with a request ID without repeating it. |
+| `find_phone` | Ring at maximum alarm volume for 1–120 seconds (default 30), or stop. Restores the previous volume unless manually changed. |
+| `get_location` | Current latitude/longitude, accuracy, fix age and timestamp; waits up to 15 seconds for a fix no older than 30 seconds. |
+| `set_do_not_disturb` | Set Phone Link's mode to `off`, `priority`, `alarms_only`, or `total_silence`. |
 | `list_apps` | List launchable apps and package names. |
 | `open_app` | Launch an app by package name. |
 | `get_screen` | Return bounded accessible UI text, descriptions, and pixel bounds. Password text is redacted. |
@@ -41,11 +47,28 @@ Official references: [Secure MCP Tunnel](https://developers.openai.com/api/docs/
 
 The **Screen & app control** capability can operate other messaging/calling apps. Turning off dedicated SMS/call tools does not block those actions through general UI automation. Disable screen control too when you want to prevent that route.
 
+The automatic **“MCP is controlling this phone”** banner appears during tool activity and disappears two seconds after the last active action. It does not intercept taps and uses the existing Accessibility permission. Health checks and operation-status checks do not show it.
+
+### Messaging
+
+Enable **Messaging** and **Screen control**, and use Google Messages as the default messaging app. `send_message` chooses its route once: locked/screen-off sends use the default SMS SIM; awake/unlocked sends open Google Messages, verify the recipient and draft, and tap Send internally. No separate compose, read-screen, or tap tool calls are needed. Existing different drafts are preserved and reported as an error.
+
+Google Messages selects RCS or SMS based on the conversation and its settings. Enable RCS and configure **Automatically resend as text (SMS/MMS)** in Messages if desired ([Google's instructions](https://support.google.com/messages/answer/9487020?hl=en)). Phone Link never attempts a second SMS send after an uncertain Messages action. `send_sms` remains available for an explicitly SMS-only request.
+
+The UI flow currently recognizes English Google Messages controls. It fails if it cannot verify the recipient or recognize the interface; a Messages update may require an adapter update. A successful Send tap reports “Text sent.” without waiting for delivery.
+
+### Phone utilities
+
+- **Find phone:** enable the capability, then use `find_phone` with `action: "ring"` or `"stop"`. Its notification also has **Stop sound**. Do Not Disturb must allow alarms; the tool reports an error otherwise. Disconnecting stops the sound. The previous alarm volume is saved for recovery after a process restart.
+- **Location:** enable the capability and grant approximate or precise location. Enable it while Phone Link is open, then connect or reconnect. The foreground connection retains location access while the phone is locked; no always-on background-location permission is requested. Results include accuracy and age rather than implying an exact GPS position.
+- **Do Not Disturb:** enable the capability and grant Android's Do Not Disturb access. On Android 15 and later, this controls Phone Link's own mode. Turning it off cannot disable another app's active mode or a system schedule ([Android API behavior](https://developer.android.com/reference/android/app/NotificationManager#setInterruptionFilter(int))).
+
 ## Result semantics and limits
 
-- Timers, alarms, calls, and app launches return **requested** after Android accepts the launch. The clock/dialer owns completion; this app does not claim independent verification. Use `get_screen` when confirmation is needed.
-- SMS starts as **submitted**. `operation_status` becomes **sent** or **failed** from Android callbacks. Sent does not mean delivered to the recipient. SMS does not provide RCS, WhatsApp, or MMS.
-- `set_timer`, `set_alarm`, `send_sms`, and `place_call` require a unique `request_id` (8–128 ASCII letters, digits, hyphens or underscores). Reuse it only for an identical retry. It is reserved on disk before acting. Retries return the existing result; changed arguments are rejected. After an interrupted operation, **indeterminate** means check the phone before creating a new request ID. Clearing app storage or uninstalling clears this protection.
+- Successful tool calls return `success: true` and `status: "completed"`. For timers, alarms, calls, and app launches, Android accepting the handoff counts as success (`completion_basis: "android_accepted"`). Messages such as “Timer set.” and “Alarm set.” are intended for direct user-facing confirmation, without routine caveats or extra screen checks. This is optimistic success, not a separate observation of the destination app's state.
+- SMS submission also reports optimistic success and “Text sent.” The `sms_status` field distinguishes `submitted` from `sent` after Android callbacks. Later send failures are still surfaced by `operation_status` as `success: false`, `status: "failed"`, with the MCP error flag. Neither submission nor a send callback confirms recipient delivery. SMS does not provide RCS, WhatsApp, or MMS.
+- Explicit tool failures consistently return `success: false`, `status: "failed"`, and an explanation. Journal states `unknown`, `indeterminate`, and `in_progress` return `success: null` instead of inventing a completed action. Older persisted `requested`/`submitted`/`sent` results are normalized to the new format without repeating the action.
+- `set_timer`, `set_alarm`, `send_message`, `send_sms`, `place_call`, `find_phone`, and `set_do_not_disturb` require a unique `request_id` (8–128 ASCII letters, digits, hyphens or underscores). Reuse it only for an identical retry. It is reserved on disk before acting. Retries return the existing result; changed arguments are rejected. After an interrupted operation, **indeterminate** means check the phone before creating a new request ID. Clearing app storage or uninstalling clears this protection.
 - Screen content varies by app. Custom drawing, protected surfaces, secure fields, permission prompts, and lock screens may be unavailable. This app does not unlock the phone or provide arbitrary shell access. Phone Link's own UI is excluded from screen reading, tapping, and text entry.
 - The phone initiates HTTPS polling to `api.openai.com`. The app does not open an HTTP port. One active installation should use a given tunnel ID.
 - The app implements JSON-RPC initialization, ping, tool discovery/calls, notification acknowledgments and session termination, negotiating MCP through `2025-11-25`. It does not advertise unsupported newer MCP capabilities, tool-list change notifications, subscriptions, OAuth forwarding, or streaming progress.
@@ -77,11 +100,17 @@ For a cloud-synced source directory, set `phoneLink.buildRoot=/absolute/path/out
 ```sh
 ./gradlew :app:assembleDebug
 ./gradlew :app:testDebugUnitTest :app:lintDebug
-./gradlew :app:connectedDebugAndroidTest
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Run instrumentation tests on a disposable emulator. They temporarily enable Accessibility and contact permissions, seed then remove a fixture contact, exercise a separate test-only activity, and intercept clock intents. They do not send texts or place calls. The test activity is in the separate test APK and is never packaged into Phone Link.
+Run instrumentation tests only on a disposable emulator, explicitly selecting its ADB serial. They clear the app's saved connection and capability settings. They temporarily enable Accessibility, contacts, location and DND permissions, seed then remove a fixture contact and mock location, exercise a separate test-only activity, and intercept clock intents and the final Messages Send click. They do not send texts or place calls. The test activity is in the separate test APK and is never packaged into Phone Link. The Messages UI tests require Google Messages installed, initialized, set as the default messaging app and using English.
+
+```sh
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s emulator-5554 shell am instrument -w dev.androidmcp.test/androidx.test.runner.AndroidJUnitRunner
+```
 
 Source layout:
 
@@ -91,10 +120,14 @@ Source layout:
 - `BridgeService.kt`: foreground connection lifecycle, notification, stop-on-revocation.
 - `MainActivity.kt`: Material 3 connection and capability settings.
 - `SmsStatusReceiver.kt`: SMS send-result tracking.
+- `GoogleMessagesSender.kt`: bounded recipient/draft verification and one Send action.
+- `FindPhoneSound.kt`, `PhoneLocation.kt`: timed audio playback and location acquisition.
 
 Live ChatGPT connectivity and real SIM behavior require a user-provided tunnel and physical phone. A build, local readiness check, or mock protocol test does not establish that live connection.
 
 ## Verification in this workspace
+
+Version 0.3.0 passed 32 JVM tests and 13 Android integration tests, with zero Android lint errors (24 warnings). New coverage includes optimistic result formatting, locked/screen-off routing, no duplicate fallback after a Messages error, real Google Messages recipient/draft checks with the final Send click intercepted, named-contact verification, banner visibility and touch-through behavior, a recent mock location, DND on/off requests, and alarm-volume restoration. The emulator uses Google Messages `messages.android_20240528_00_RC01_alldpi.arm64-v8a.phone`; real RCS/SMS delivery, physical-phone GPS and audible finder playback remain device checks. No test transmits a message or places a call.
 
 Version 0.2.0 passed 25 JVM tests and seven Android integration tests. Android lint reported zero errors. Both light and dark Material layouts were rendered and inspected on the emulator.
 

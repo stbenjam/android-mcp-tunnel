@@ -9,6 +9,10 @@ import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import dev.androidmcp.core.McpServer
 import dev.androidmcp.core.TunnelClient
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -22,12 +26,29 @@ class BridgeService : Service() {
             private set
         const val CHANNEL = "phone_link_connection"
         @Volatile private var activeTunnel: TunnelClient? = null
+        @Volatile private var activeService: BridgeService? = null
+        @Volatile var locationAccessActive = false
+            private set
+        fun enablePlayback() {
+            val service = activeService ?: throw dev.androidmcp.core.ToolFailure("Connect Phone Link before ringing the phone.")
+            service.foregroundTypes = service.foregroundTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            service.updateForeground()
+        }
         fun diagnostics() = (activeTunnel?.diagnostics() ?: dev.androidmcp.core.obj("running" to false))
             .put("status", status)
     }
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private var tunnel: TunnelClient? = null
+    private var foregroundTypes = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+    private fun updateForeground(enableLocation: Boolean = false) {
+        if (enableLocation && AppState(this).enabled("location") &&
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            foregroundTypes = foregroundTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        }
+        startForeground(1, notification(status), foregroundTypes)
+        locationAccessActive = foregroundTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0
+    }
     private val watchdog = object : Runnable {
         override fun run() {
             if (PhoneAccessibilityService.instance == null) {
@@ -38,14 +59,22 @@ class BridgeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onCreate() {
         super.onCreate()
+        activeService = this
+        FindPhoneSound.recoverVolume(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Phone connection", NotificationManager.IMPORTANCE_LOW))
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "STOP_RINGING") {
+            FindPhoneSound.stop(this)
+            if (!running) stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.action == "STOP") { status = "Disconnected"; stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == "ENABLE_LOCATION" && running) { updateForeground(true); return START_NOT_STICKY }
         if (running) return START_NOT_STICKY
         status = "Connecting"
-        startForeground(1, notification(status))
+        updateForeground(true)
         val state = AppState(this)
         if (PhoneAccessibilityService.instance == null) {
             status = "Enable Accessibility first"; stopSelf(); return START_NOT_STICKY
@@ -86,6 +115,10 @@ class BridgeService : Service() {
         running = false
         handler.removeCallbacks(watchdog)
         tunnel?.stop()
+        FindPhoneSound.stop(this)
+        locationAccessActive = false
+        if (activeService === this) activeService = null
+        PhoneAccessibilityService.instance?.clearControlIndicator()
         if (activeTunnel === tunnel) activeTunnel = null
         executor.shutdownNow()
         if (status == "Connected" || status == "Connecting" || status.startsWith("Reconnecting")) status = "Disconnected"

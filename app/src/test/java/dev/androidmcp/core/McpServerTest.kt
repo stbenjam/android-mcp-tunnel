@@ -6,7 +6,7 @@ import org.junit.Test
 class McpServerTest {
     private var calls = 0
     private val server = McpServer(listOf(Tool("timer", "Set a timer", obj("seconds" to intProp("seconds", 1, 60)), listOf("seconds")) {
-        calls++; obj("status" to "done")
+        calls++; obj("status" to "completed")
     }))
     private fun request(method: String, params: org.json.JSONObject = obj()) = obj("jsonrpc" to "2.0", "id" to "id-1", "method" to method, "params" to params)
     @Test fun negotiatesSupportedVersionAndPreservesIds() {
@@ -27,9 +27,25 @@ class McpServerTest {
         assertEquals(0, calls)
     }
     @Test fun validCallExecutesOnce() {
-        assertFalse(server.handle(request("tools/call", obj("name" to "timer", "arguments" to obj("seconds" to 5))))!!
-            .getJSONObject("result").getBoolean("isError"))
+        val result = server.handle(request("tools/call", obj("name" to "timer", "arguments" to obj("seconds" to 5))))!!
+            .getJSONObject("result")
+        assertFalse(result.getBoolean("isError"))
+        val output = org.json.JSONObject(result.getJSONArray("content").getJSONObject(0).getString("text"))
+        assertTrue(output.getBoolean("success")); assertEquals("completed", output.getString("status"))
         assertEquals(1, calls)
+    }
+    @Test fun failuresHaveConsistentJsonAndMcpErrorFlag() {
+        val failed = McpServer(listOf(
+            Tool("denied", "test") { throw SecurityException() },
+            Tool("callback", "test") { obj("status" to "failed", "message" to "Android reported that the text could not be sent.") },
+        ))
+        for (name in listOf("denied", "callback")) {
+            val result = failed.handle(request("tools/call", obj("name" to name)))!!.getJSONObject("result")
+            assertTrue(result.getBoolean("isError"))
+            val output = org.json.JSONObject(result.getJSONArray("content").getJSONObject(0).getString("text"))
+            assertFalse(output.getBoolean("success")); assertEquals("failed", output.getString("status"))
+            assertTrue(output.getString("message").isNotBlank())
+        }
     }
     @Test fun notificationsHaveNoResponseOrSideEffects() {
         assertNull(server.handle(obj("jsonrpc" to "2.0", "method" to "notifications/initialized")))

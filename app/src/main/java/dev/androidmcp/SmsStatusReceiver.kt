@@ -23,7 +23,7 @@ class SmsStatusReceiver : BroadcastReceiver() {
                 val status = when { failure != null -> "failed"; codes.all { it == Activity.RESULT_OK } -> "sent"; else -> "submitted" }
                 AppState(context).ledger.complete(id, obj("status" to status, "request_id" to id,
                     "parts" to total, "sent_parts" to codes.count { it == Activity.RESULT_OK },
-                    "android_error_code" to failure, "message" to "SMS send status; recipient delivery is not confirmed."))
+                    "android_error_code" to failure, "message" to if (failure != null) "Android reported that the text could not be sent." else "Text sent."))
             } catch (_: Exception) {
                 android.util.Log.w("PhoneLink", "Could not persist SMS send status")
             } finally { pending.finish() }

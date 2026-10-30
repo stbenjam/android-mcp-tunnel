@@ -1,6 +1,7 @@
 package dev.androidmcp
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -37,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private val switches = linkedMapOf<String, Pair<MaterialSwitch, String?>>()
     private val handler = Handler(Looper.getMainLooper())
     private var refreshing = false
+    private var pendingDndEnable = false
     private val ticker = object : Runnable {
         override fun run() { refresh(); handler.postDelayed(this, 1000) }
     }
@@ -48,6 +50,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         state = AppState(this)
+        pendingDndEnable = savedInstanceState?.getBoolean("pending_dnd") ?: false
+        FindPhoneSound.recoverVolume(this)
         val root = column().apply {
             setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface))
             setOnApplyWindowInsetsListener { view, insets ->
@@ -94,9 +98,12 @@ class MainActivity : AppCompatActivity() {
         section(content, "Tools")
         toggle(content, "clock", "Timers and alarms", "Use the phone’s clock app", null)
         toggle(content, "contacts", "Contacts", "Find names and phone numbers", Manifest.permission.READ_CONTACTS)
-        toggle(content, "sms", "SMS", "Send texts using the default SIM", Manifest.permission.SEND_SMS)
+        toggle(content, "sms", "Messaging", "Use Google Messages or send SMS", Manifest.permission.SEND_SMS)
         toggle(content, "calls", "Phone calls", "Call a phone number", Manifest.permission.CALL_PHONE)
         toggle(content, "screen", "Screen control", "Read, tap, swipe and type in apps", null)
+        toggle(content, "finder", "Find phone", "Play a loud, timed alarm sound", null)
+        toggle(content, "location", "Location", "Share this phone’s current location", Manifest.permission.ACCESS_COARSE_LOCATION)
+        toggle(content, "dnd", "Do Not Disturb", "Control the Phone Link mode", null)
         content.addView(label("Screen control can also use messaging and phone apps, even when their dedicated tools are off.",
             com.google.android.material.R.style.TextAppearance_Material3_BodySmall, true).apply {
             setPadding(dp(20), dp(8), dp(20), dp(16))
@@ -112,8 +119,16 @@ class MainActivity : AppCompatActivity() {
             .apply { setPadding(dp(20), dp(16), dp(20), 0) })
     }
 
-    override fun onResume() { super.onResume(); handler.post(ticker) }
+    override fun onResume() {
+        super.onResume()
+        if (pendingDndEnable) {
+            if (getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) state.enable("dnd", true)
+            pendingDndEnable = false
+        }
+        handler.post(ticker)
+    }
     override fun onPause() { handler.removeCallbacks(ticker); super.onPause() }
+    override fun onSaveInstanceState(outState: Bundle) { outState.putBoolean("pending_dnd", pendingDndEnable); super.onSaveInstanceState(outState) }
 
     private fun startConnection() {
         if (PhoneAccessibilityService.instance == null) { accessibilitySettings(); return }
@@ -211,10 +226,19 @@ class MainActivity : AppCompatActivity() {
         row.setOnClickListener { control.toggle() }
         control.setOnCheckedChangeListener { _, checked ->
             if (!refreshing) {
-                if (checked && permission != null && checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                if (checked && name == "dnd" && !getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) {
+                    state.enable(name, false); control.isChecked = false; pendingDndEnable = true
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                } else if (checked && permission != null && checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
                     state.enable(name, false); control.isChecked = false
-                    requestPermissions(arrayOf(permission), 100 + switches.keys.indexOf(name))
-                } else state.enable(name, checked)
+                    val requested = if (permission == Manifest.permission.ACCESS_COARSE_LOCATION)
+                        arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) else arrayOf(permission)
+                    requestPermissions(requested, 100 + switches.keys.indexOf(name))
+                } else {
+                    state.enable(name, checked)
+                    if (name == "location" && checked) enableLocationForeground()
+                    if (name == "finder" && !checked) FindPhoneSound.stop(this)
+                }
             }
         }
         parent.addView(row)
@@ -225,7 +249,14 @@ class MainActivity : AppCompatActivity() {
             toast("Permission not granted. You can change it in app settings."); return
         }
         if (requestCode == 50) startConnection()
-        else switches.keys.elementAtOrNull(requestCode - 100)?.let { state.enable(it, true); refresh() }
+        else switches.keys.elementAtOrNull(requestCode - 100)?.let {
+            state.enable(it, true)
+            if (it == "location") enableLocationForeground()
+            refresh()
+        }
+    }
+    private fun enableLocationForeground() {
+        if (BridgeService.running) startService(Intent(this, BridgeService::class.java).setAction("ENABLE_LOCATION"))
     }
 
     private fun diagnostics() {
