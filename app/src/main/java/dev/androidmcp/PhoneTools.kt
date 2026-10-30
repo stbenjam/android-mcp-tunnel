@@ -31,7 +31,7 @@ class PhoneTools(private val context: Context, private val state: AppState) {
     private fun write(name: String, description: String, properties: JSONObject, required: List<String>,
                       capability: String, permission: String? = null, action: (JSONObject) -> JSONObject): Tool {
         properties.put("request_id", requestId)
-        return Tool(name, description, properties, required + "request_id", serial = name !in setOf("send_sms", "set_do_not_disturb")) { args ->
+        return Tool(name, description, properties, required + "request_id", serial = name !in setOf("send_message", "send_sms", "set_do_not_disturb")) { args ->
             allowed(capability, permission)
             state.ledger.run(name, args) { action(args) }
         }
@@ -86,20 +86,12 @@ class PhoneTools(private val context: Context, private val state: AppState) {
             }
             obj("contacts" to contacts)
         },
-        write("send_message", "Send a text automatically: when locked or screen off, send SMS directly; when awake and unlocked, send through Google Messages (RCS/SMS selected by Messages). Uses one tool call. Requires messaging capability; the unlocked route also requires screen control. Use a unique request_id and reuse it only for an identical retry.",
+        write("send_message", "Send SMS directly through the default SMS SIM, including when locked or the screen is off. Requires Messaging and SMS permission; screen control is not required. Does not open a messaging app or send RCS. On success=true, report the text as sent. Reuse request_id only for an identical retry; operation_status can check later Android send callbacks.",
             obj("number" to stringProp("Recipient phone number, preferably international format", 40),
-                "text" to stringProp("Message body", 1600)), listOf("number", "text"), "sms") { a ->
-            val locked = context.getSystemService(KeyguardManager::class.java).isDeviceLocked
-            val screenOn = context.getSystemService(android.os.PowerManager::class.java).isInteractive
-            MessageRouting.send(locked, screenOn, sms = {
-                allowed("sms", Manifest.permission.SEND_SMS)
-                sendSms(a)
-            }, messages = {
-                allowed("screen")
-                GoogleMessagesSender(context, access()).send(phoneNumber(a.getString("number")), a.getString("text"))
-            })
+                "text" to stringProp("Message body", 1600)), listOf("number", "text"), "sms", Manifest.permission.SEND_SMS) { a ->
+            sendSms(a)
         },
-        write("send_sms", "Send SMS directly through the default SMS SIM; cannot send RCS. Prefer send_message for automatic RCS/SMS routing. Use this tool for explicit SMS-only/background sends. On success=true, report the text as sent. operation_status can check later Android send callbacks when needed.",
+        write("send_sms", "Compatibility alias for send_message: send SMS directly through the default SMS SIM, including when locked or the screen is off. Prefer send_message. On success=true, report the text as sent; operation_status can check later Android send callbacks.",
             obj("number" to stringProp("Recipient phone number, preferably international format", 40),
                 "text" to stringProp("Message body", 1600)), listOf("number", "text"), "sms", Manifest.permission.SEND_SMS) { a ->
             sendSms(a)
@@ -187,10 +179,10 @@ class PhoneTools(private val context: Context, private val state: AppState) {
     }
     private fun sendSms(a: JSONObject): JSONObject {
             val number = phoneNumber(a.getString("number"))
-            if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) throw ToolFailure("This device cannot send SMS.")
+            if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) throw ActionNotPerformed("This device cannot send SMS.")
             val subscription = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
             if (!android.telephony.SubscriptionManager.isValidSubscriptionId(subscription))
-                throw ToolFailure("Choose a default SMS SIM in Android settings first.")
+                throw ActionNotPerformed("Choose a default SMS SIM in Android settings first.")
             val sms = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(SmsManager::class.java).createForSubscriptionId(subscription)
                 else @Suppress("DEPRECATION") SmsManager.getSmsManagerForSubscriptionId(subscription)
             val parts = sms.divideMessage(a.getString("text"))
@@ -208,9 +200,9 @@ class PhoneTools(private val context: Context, private val state: AppState) {
     }
 
     private fun phoneNumber(value: String): String {
-        if (!value.matches(Regex("\\+?[0-9 ()-]{3,39}"))) throw ToolFailure("Use a valid phone number without extensions or service codes.")
+        if (!value.matches(Regex("\\+?[0-9 ()-]{3,39}"))) throw ActionNotPerformed("Use a valid phone number without extensions or service codes.")
         val normalized = value.filter { it == '+' || it.isDigit() }
-        if (normalized.count { it.isDigit() } !in 3..15) throw ToolFailure("A phone number must contain 3–15 digits.")
+        if (normalized.count { it.isDigit() } !in 3..15) throw ActionNotPerformed("A phone number must contain 3–15 digits.")
         return normalized
     }
 }

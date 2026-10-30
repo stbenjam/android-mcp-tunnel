@@ -208,149 +208,12 @@ class PhoneIntegrationTest {
             state.enable("contacts", true)
             val contacts = call("search_contacts", obj("query" to "PhoneLink Fixture")).getJSONArray("contacts")
             assertEquals(1, contacts.length()); assertEquals("+12025550123", contacts.getJSONObject(0).getString("number"))
-            val service = PhoneAccessibilityService.requireService()
-            service.launch(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:+12025550123")).setPackage(GoogleMessagesSender.PACKAGE))
-            await({ "named contact in Messages" }) {
-                runCatching { call("get_screen").toString().contains("PhoneLink Fixture") }.getOrDefault(false)
-            }
-            var sends = 0
-            val body = "Phone Link named contact test"
-            try {
-                val result = GoogleMessagesSender(context, service) { sends++; true }.send("+12025550123", body)
-                assertTrue(result.getBoolean("success")); assertEquals(1, sends)
-            } finally {
-                service.onMain {
-                    val root = service.rootInActiveWindow
-                    val fields = root?.findAccessibilityNodeInfosByViewId("${GoogleMessagesSender.PACKAGE}:id/compose_message_text").orEmpty()
-                    try {
-                        fields.filter { it.text?.toString() == body }.forEach {
-                            it.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
-                                android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") })
-                        }
-                    } finally {
-                        @Suppress("DEPRECATION") fields.forEach { it.recycle() }
-                        @Suppress("DEPRECATION") root?.recycle()
-                    }
-                }
-            }
         } finally {
             automation.adoptShellPermissionIdentity(Manifest.permission.WRITE_CONTACTS)
             resolver.delete(raw, null, null)
             automation.dropShellPermissionIdentity()
         }
     }
-    @Test fun googleMessagesVerifiesDraftAndRecipientBeforeSingleSendClick() {
-        val service = PhoneAccessibilityService.requireService()
-        val number = "+12025550123"
-        val body = "Phone Link test draft"
-        fun clearFixtureDraft() = service.onMain {
-            val root = service.rootInActiveWindow
-            val fields = root?.findAccessibilityNodeInfosByViewId("${GoogleMessagesSender.PACKAGE}:id/compose_message_text").orEmpty()
-            try {
-                fields.filter { it.text?.toString() in setOf(body, "A different draft") }.forEach {
-                    it.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
-                        android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") })
-                }
-            } finally {
-                @Suppress("DEPRECATION") fields.forEach { it.recycle() }
-                @Suppress("DEPRECATION") root?.recycle()
-            }
-        }
-        service.launch(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:$number")).setPackage(GoogleMessagesSender.PACKAGE))
-        await({ "fixture conversation editor" }) {
-            runCatching { call("get_screen").toString().contains("compose_message_text") }.getOrDefault(false)
-        }
-        clearFixtureDraft() // Clean only our own drafts left by an interrupted earlier test run.
-        try {
-            // The real Google Messages UI is exercised, but the final send click is intercepted.
-            var sends = 0
-            val sender = GoogleMessagesSender(context, service) { sends++; true }
-            val result = service.withControlIndicator { sender.send(number, body) }
-            assertEquals(1, sends); assertTrue(result.getBoolean("success"))
-            assertEquals("google_messages", result.getString("route"))
-            assertEquals("Text sent.", result.getString("message"))
-            // The intercepted click leaves our draft intact. A different request must not overwrite it.
-            val rejectedId = UUID.randomUUID().toString()
-            val rejectedArgs = obj("request_id" to rejectedId, "number" to number, "text" to "A different draft")
-            val rejected = state.ledger.run("send_message", rejectedArgs) { sender.send(number, "A different draft") }
-            assertEquals("failed", rejected.getString("status")); assertFalse(rejected.getBoolean("action_performed"))
-            val statusResponse = server.handle(obj("jsonrpc" to "2.0", "id" to 1, "method" to "tools/call",
-                "params" to obj("name" to "operation_status", "arguments" to obj("request_id" to rejectedId))))!!.getJSONObject("result")
-            assertTrue(statusResponse.getBoolean("isError"))
-            val status = JSONObject(statusResponse.getJSONArray("content").getJSONObject(0).getString("text"))
-            assertEquals("failed", status.getString("status")); assertFalse(status.getBoolean("action_performed"))
-            state.ledger.run("send_message", rejectedArgs) { fail("A failed request must not execute again"); obj() }
-            assertEquals(1, sends)
-            val uncertainArgs = obj("request_id" to UUID.randomUUID().toString(), "number" to number, "text" to body)
-            val uncertain = state.ledger.run("send_message", uncertainArgs) {
-                GoogleMessagesSender(context, service) { sends++; false }.send(number, body)
-            }
-            assertEquals("indeterminate", uncertain.getString("status")); assertTrue(uncertain.isNull("action_performed"))
-            assertEquals(2, sends)
-            state.ledger.run("send_message", uncertainArgs) { fail("An uncertain request must not execute again"); obj() }
-            service.onMain {
-                val root = service.rootInActiveWindow!!
-                val fields = root.findAccessibilityNodeInfosByViewId("${GoogleMessagesSender.PACKAGE}:id/compose_message_text")
-                try {
-                    val field = fields.single()
-                    assertEquals(body, field.text.toString())
-                    assertTrue(field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
-                        android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") }))
-                } finally {
-                    @Suppress("DEPRECATION") fields.forEach { it.recycle() }
-                    @Suppress("DEPRECATION") root.recycle()
-                }
-            }
-        } finally { clearFixtureDraft() }
-    }
-
-    @Test fun messagesSwitchesFromDifferentRecipientAndPreservesTheirDraft() {
-        val service = PhoneAccessibilityService.requireService()
-        val otherNumber = "+12025550124"
-        val otherDraft = "Other conversation fixture draft"
-        val targetDraft = "Phone Link recipient routing test"
-        fun edit(action: (android.view.accessibility.AccessibilityNodeInfo) -> Unit) = service.onMain {
-            val root = service.rootInActiveWindow
-            val fields = root?.findAccessibilityNodeInfosByViewId("${GoogleMessagesSender.PACKAGE}:id/compose_message_text").orEmpty()
-            try { fields.singleOrNull()?.let(action) } finally {
-                @Suppress("DEPRECATION") fields.forEach { it.recycle() }
-                @Suppress("DEPRECATION") root?.recycle()
-            }
-        }
-        fun setText(field: android.view.accessibility.AccessibilityNodeInfo, text: String) {
-            assertTrue(field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
-                android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }))
-        }
-        fun openOther() {
-            service.launch(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:$otherNumber")).setPackage(GoogleMessagesSender.PACKAGE))
-            await({ "other fixture recipient" }) {
-                runCatching {
-                    val screen = call("get_screen")
-                    val nodes = screen.getJSONArray("nodes")
-                    (0 until nodes.length()).any { nodes.getJSONObject(it).optString("text").filter(Char::isDigit) in
-                        setOf("2025550124", "12025550124") } && screen.toString().contains("compose_message_text")
-                }.getOrDefault(false)
-            }
-        }
-        try {
-            openOther()
-            edit { setText(it, otherDraft) }
-            var sends = 0
-            val result = GoogleMessagesSender(context, service) { sends++; true }.send("+12025550123", targetDraft)
-            assertTrue(result.getBoolean("success")); assertEquals(1, sends)
-            edit { assertEquals(targetDraft, it.text.toString()); setText(it, "") }
-            openOther()
-            var preserved = false
-            await({ "other conversation draft restoration" }) {
-                edit { preserved = it.text.toString() == otherDraft }; preserved
-            }
-        } finally {
-            edit { if (it.text.toString() in setOf(targetDraft, otherDraft)) setText(it, "") }
-            openOther()
-            edit { if (it.text.toString() == otherDraft) setText(it, "") }
-        }
-    }
-
     @Test fun controlBannerDoesNotBlockUiAndDisappearsAfterWork() {
         fixture()
         val service = PhoneAccessibilityService.requireService()
@@ -408,6 +271,34 @@ class PhoneIntegrationTest {
         await { PhoneAccessibilityService.instance == null }
         assertThrows(ToolFailure::class.java) { PhoneAccessibilityService.requireService() }
         assertFalse(BridgeService.running)
+    }
+
+    @Test fun sendMessageUsesDirectSmsWithoutScreenControlWhenScreenIsOnOrOff() {
+        shell("pm grant dev.androidmcp android.permission.SEND_SMS")
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED, context.checkSelfPermission(Manifest.permission.SEND_SMS))
+        state.enable("sms", true); state.enable("screen", false)
+        val tools = PhoneTools(context, state).all()
+        assertFalse(tools.single { it.name == "send_message" }.serial)
+        try {
+            for (screenOn in listOf(true, false)) {
+                shell("input keyevent ${if (screenOn) "KEYCODE_WAKEUP" else "KEYCODE_SLEEP"}")
+                await { context.getSystemService(android.os.PowerManager::class.java).isInteractive == screenOn }
+                for (name in listOf("send_message", "send_sms")) {
+                    val id = UUID.randomUUID().toString()
+                    // Invalid recipient reaches SMS preflight but cannot transmit a message.
+                    val args = obj("number" to "not-a-number", "text" to "Never transmit this test", "request_id" to id)
+                    val result = server.handle(obj("jsonrpc" to "2.0", "id" to 1, "method" to "tools/call",
+                        "params" to obj("name" to name, "arguments" to args)))!!.getJSONObject("result")
+                    assertTrue(result.getBoolean("isError"))
+                    val error = JSONObject(result.getJSONArray("content").getJSONObject(0).getString("text"))
+                    assertEquals("Use a valid phone number without extensions or service codes.", error.getString("message"))
+                    assertFalse(error.getBoolean("action_performed"))
+                    assertEquals("failed", AppState(context).ledger.status(id).getString("status"))
+                }
+            }
+        } finally {
+            shell("input keyevent KEYCODE_WAKEUP"); shell("wm dismiss-keyguard")
+        }
     }
 
     @Test fun utilityCapabilitiesRejectDisabledAccess() {

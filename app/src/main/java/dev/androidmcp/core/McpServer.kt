@@ -22,13 +22,13 @@ class McpServer(private val tools: List<Tool>) {
             "initialize" -> obj(
                 "protocolVersion" to negotiate(params.optString("protocolVersion")),
                 "capabilities" to obj("tools" to obj("listChanged" to false)),
-                "serverInfo" to obj("name" to "android-mcp-tunnel", "version" to "0.3.1"),
+                "serverInfo" to obj("name" to "android-mcp-tunnel", "version" to "0.3.2"),
                 "instructions" to "Controls the user's Android phone. Check device_status for permissions. " +
                     "Use dedicated tools before UI automation. For side effects, generate a unique request_id and reuse it only " +
                     "to retry the identical operation. Screen actions run in order; independent calls can run concurrently. " +
-                    "For ordinary text messages use send_message. It sends SMS when locked or screen off, otherwise it handles Google Messages internally; " +
-                    "Google Messages chooses RCS/SMS and handles fallback per its settings. No separate UI tool calls are needed. Use send_sms for explicit SMS-only sends. " +
-                    "Do not retry an uncertain Messages send through send_sms, which could send a duplicate. " +
+                    "For text messages use send_message. It always sends SMS directly, including while locked or screen off. " +
+                    "It does not use Google Messages UI or RCS and does not require screen control. send_sms is a compatibility alias. " +
+                    "Do not retry an uncertain send using another tool or a new request_id, which could send a duplicate. " +
                     "Use optimistic success: success=true and status=completed mean the tool action succeeded. " +
                     "Report the returned message directly, without routine caveats or extra verification calls. " +
                     "completion_basis=android_accepted means Android accepted the action; do not claim a separate screen check or recipient delivery. " +

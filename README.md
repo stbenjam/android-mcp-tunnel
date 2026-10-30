@@ -4,9 +4,7 @@ A native Android app that exposes phone tools to ChatGPT through **OpenAI Secure
 
 Version 0.2.0 uses Material 3 controls, follows the phone's light/dark theme, and uses dynamic system colors where available. Tunnel credentials are edited in a separate settings dialog.
 
-Version 0.3.0 adds automatic Google Messages/SMS routing, explicit optimistic success responses, a visible control banner, and tools to find the phone, get its location, and control Do Not Disturb.
-
-Version 0.3.1 fixes Google Messages title selection when message history is drawn behind the toolbar. It uses the identified title/Send controls on newer Messages versions and the title's avatar control on the older layout, excluding message history and other conversation panes. It reuses and verifies an open conversation, preserves drafts across recipient-details navigation, and waits for draft restoration before editing. A failure before Send is recorded as a definite failure instead of an indeterminate operation.
+Version 0.3.2 keeps the `send_message` tool name and always sends SMS directly through Android. Google Messages automation and RCS routing have been removed. The visible control banner, explicit success responses, and tools to find the phone, get its location, and control Do Not Disturb remain available.
 
 **Accessibility is mandatory.** Enable Phone Link control before connecting. Revoking Accessibility stops the tunnel. Screen controls and activity launches require an awake, unlocked phone; requests fail with an explanation when the screen is off or the device is locked. There is no per-action confirmation screen added by this app. Android and the destination app can still require user interaction.
 
@@ -31,8 +29,8 @@ Official references: [Secure MCP Tunnel](https://developers.openai.com/api/docs/
 | `set_timer` | Ask the clock app to start a labeled countdown (1 second–24 hours). |
 | `set_alarm` | Ask the clock app for a one-time alarm at the next occurrence of an hour/minute in the phone's timezone. |
 | `search_contacts` | Search contacts by name or number; bounded results with names and phone numbers. |
-| `send_message` | One call: direct SMS when locked or the screen is off; Google Messages when awake and unlocked, using its RCS/SMS selection. |
-| `send_sms` | Send SMS from the default SMS SIM, with multipart support and Android send-result callbacks. |
+| `send_message` | Send SMS directly from the default SMS SIM, with multipart support and Android send-result callbacks. Works with the screen on or off, locked or unlocked. |
+| `send_sms` | Compatibility alias for direct SMS sending; prefer `send_message`. |
 | `place_call` | Start a call through Android. |
 | `operation_status` | Inspect an earlier operation with a request ID without repeating it. |
 | `find_phone` | Ring at maximum alarm volume for 1–120 seconds (default 30), or stop. Restores the previous volume unless manually changed. |
@@ -53,11 +51,9 @@ The automatic **“MCP is controlling this phone”** banner appears during tool
 
 ### Messaging
 
-Enable **Messaging** and **Screen control**, and use Google Messages as the default messaging app. `send_message` chooses its route once: locked/screen-off sends use the default SMS SIM; awake/unlocked sends open Google Messages, verify the recipient and draft, and tap Send internally. No separate compose, read-screen, or tap tool calls are needed. Existing different drafts are preserved and reported as an error.
+Enable **Messaging**, grant Android's SMS permission, and select the default SMS SIM. `send_message` always uses Android's SMS API, including while locked or the screen is off. It does not require Screen control, open a messaging app, inspect conversation details, or edit drafts. The app's mandatory Accessibility connection requirement still applies.
 
-Google Messages selects RCS or SMS based on the conversation and its settings. Enable RCS and configure **Automatically resend as text (SMS/MMS)** in Messages if desired ([Google's instructions](https://support.google.com/messages/answer/9487020?hl=en)). Phone Link never attempts a second SMS send after an uncertain Messages action. `send_sms` remains available for an explicitly SMS-only request.
-
-The UI flow currently recognizes English Google Messages controls. It fails if it cannot verify the recipient or recognize the interface; a Messages update may require an adapter update. A successful Send tap reports “Text sent.” without waiting for delivery.
+The tool name and arguments (`number`, `text`, `request_id`) are unchanged. `send_sms` remains as a compatibility alias. Neither tool sends RCS or MMS. Both run independently of the ordered UI-action queue.
 
 ### Phone utilities
 
@@ -70,7 +66,7 @@ The UI flow currently recognizes English Google Messages controls. It fails if i
 - Successful tool calls return `success: true` and `status: "completed"`. For timers, alarms, calls, and app launches, Android accepting the handoff counts as success (`completion_basis: "android_accepted"`). Messages such as “Timer set.” and “Alarm set.” are intended for direct user-facing confirmation, without routine caveats or extra screen checks. This is optimistic success, not a separate observation of the destination app's state.
 - SMS submission also reports optimistic success and “Text sent.” The `sms_status` field distinguishes `submitted` from `sent` after Android callbacks. Later send failures are still surfaced by `operation_status` as `success: false`, `status: "failed"`, with the MCP error flag. Neither submission nor a send callback confirms recipient delivery. SMS does not provide RCS, WhatsApp, or MMS.
 - Explicit tool failures consistently return `success: false`, `status: "failed"`, and an explanation. Journal states `unknown`, `indeterminate`, and `in_progress` return `success: null` instead of inventing a completed action. Older persisted `requested`/`submitted`/`sent` results are normalized to the new format without repeating the action.
-- A Messages failure before the Send action returns `action_performed: false` and is saved with its error. Both `operation_status` and an identical retry return that same failure without executing again. After resolving the cause, an intentional new attempt needs a new request ID. A timeout races an atomic cancellation guard, so a delayed UI callback cannot send after a definite failure is reported. Once Send has started, an unconfirmed result remains `indeterminate`. Older indeterminate records are retained: the update cannot reconstruct what happened during those requests.
+- A known preflight failure, such as an invalid recipient number or missing default SMS SIM, returns `action_performed: false` and is saved with its error. Both `operation_status` and an identical retry return that failure without executing again. After resolving the cause, an intentional new attempt needs a new request ID. Existing operation records from older versions are retained, including failed or indeterminate Google Messages requests; the upgrade never resends them automatically.
 - `set_timer`, `set_alarm`, `send_message`, `send_sms`, `place_call`, `find_phone`, and `set_do_not_disturb` require a unique `request_id` (8–128 ASCII letters, digits, hyphens or underscores). Reuse it only for an identical retry. It is reserved on disk before acting. Retries return the existing result; changed arguments are rejected. After an interrupted operation, **indeterminate** means check the phone before creating a new request ID. Clearing app storage or uninstalling clears this protection.
 - Screen content varies by app. Custom drawing, protected surfaces, secure fields, permission prompts, and lock screens may be unavailable. This app does not unlock the phone or provide arbitrary shell access. Phone Link's own UI is excluded from screen reading, tapping, and text entry.
 - The phone initiates HTTPS polling to `api.openai.com`. The app does not open an HTTP port. One active installation should use a given tunnel ID.
@@ -106,7 +102,7 @@ For a cloud-synced source directory, set `phoneLink.buildRoot=/absolute/path/out
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Run instrumentation tests only on a disposable emulator, explicitly selecting its ADB serial. They clear the app's saved connection and capability settings. They temporarily enable Accessibility, contacts, location and DND permissions, seed then remove a fixture contact and mock location, exercise a separate test-only activity, and intercept clock intents and the final Messages Send click. They do not send texts or place calls. The test activity is in the separate test APK and is never packaged into Phone Link. The Messages UI tests require Google Messages installed, initialized, set as the default messaging app and using English.
+Run instrumentation tests only on a disposable emulator, explicitly selecting its ADB serial. They clear the app's saved connection and capability settings. They temporarily enable Accessibility, contacts, SMS, location and DND permissions, seed then remove a fixture contact and mock location, exercise a separate test-only activity, and intercept clock intents. SMS routing tests use invalid recipients to verify the direct backend with screen control disabled and the screen on/off, without transmitting anything. They do not send texts or place calls. The test activity is in the separate test APK and is never packaged into Phone Link. Google Messages is not required for the tests.
 
 ```sh
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
@@ -123,15 +119,15 @@ Source layout:
 - `BridgeService.kt`: foreground connection lifecycle, notification, stop-on-revocation.
 - `MainActivity.kt`: Material 3 connection and capability settings.
 - `SmsStatusReceiver.kt`: SMS send-result tracking.
-- `GoogleMessagesSender.kt`: bounded recipient/draft verification and one Send action.
-- `core/MessagesUi.kt`, `core/SendAttempt.kt`: structural Messages selectors and cancellation/send coordination.
 - `FindPhoneSound.kt`, `PhoneLocation.kt`: timed audio playback and location acquisition.
 
 Live ChatGPT connectivity and real SIM behavior require a user-provided tunnel and physical phone. A build, local readiness check, or mock protocol test does not establish that live connection.
 
 ## Verification in this workspace
 
-Version 0.3.1 passed 43 JVM tests and 14 Android integration tests, with zero lint errors (24 warnings). Added tests cover history text behind the title, split-pane recipient selection, modern and legacy Send controls, definite failure persistence, timeout/Send races, error status through MCP, and switching recipients without overwriting the other conversation's draft. Real Google Messages tests intercept the final Send action. Newer UI selectors also use regression fixtures based on the Android 17 phone's observed structure. The 0.3.1 APK still needs installation and a check on the physical phone; USB was disconnected during this fix. Existing indeterminate journal records are not rewritten.
+Version 0.3.2 passed 32 JVM tests and 13 Android integration tests, with zero lint errors (24 warnings). The retained `send_message` tool and the `send_sms` compatibility alias both reach the direct SMS backend with Screen control disabled and the screen on or off. The routing checks use invalid recipients and verify persisted preflight failures; no test transmits a message. Google Messages automation and its dedicated tests have been removed.
+
+Version 0.3.1 passed 43 JVM tests and 14 Android integration tests, with zero lint errors (24 warnings). Its Google Messages UI path still failed recipient-details recognition on the physical phone after installation. That path and its dedicated tests were removed in 0.3.2 at the user's request. Existing operation records remain unchanged.
 
 Version 0.3.0 passed 32 JVM tests and 13 Android integration tests, with zero Android lint errors (24 warnings). New coverage includes optimistic result formatting, locked/screen-off routing, no duplicate fallback after a Messages error, real Google Messages recipient/draft checks with the final Send click intercepted, named-contact verification, banner visibility and touch-through behavior, a recent mock location, DND on/off requests, and alarm-volume restoration. The emulator uses Google Messages `messages.android_20240528_00_RC01_alldpi.arm64-v8a.phone`; real RCS/SMS delivery, physical-phone GPS and audible finder playback remain device checks. No test transmits a message or places a call.
 

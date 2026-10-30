@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         section(content, "Tools")
         toggle(content, "clock", "Timers and alarms", "Use the phone’s clock app", null)
         toggle(content, "contacts", "Contacts", "Find names and phone numbers", Manifest.permission.READ_CONTACTS)
-        toggle(content, "sms", "Messaging", "Use Google Messages or send SMS", Manifest.permission.SEND_SMS)
+        toggle(content, "sms", "Messaging", "Send SMS using the default SIM", Manifest.permission.SEND_SMS)
         toggle(content, "calls", "Phone calls", "Call a phone number", Manifest.permission.CALL_PHONE)
         toggle(content, "screen", "Screen control", "Read, tap, swipe and type in apps", null)
         toggle(content, "finder", "Find phone", "Play a loud, timed alarm sound", null)
