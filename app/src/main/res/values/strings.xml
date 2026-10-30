@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Phone Link</string>
+    <string name="accessibility_description">Required to let your connected ChatGPT control this phone: read visible app content, tap, type, swipe, navigate, and launch phone actions. Screen content is returned only when requested through your tunnel. Enable only for a tunnel you control. Stop the connection at any time in Phone Link.</string>
+    <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>
