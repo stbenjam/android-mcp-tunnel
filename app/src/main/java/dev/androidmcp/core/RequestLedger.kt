@@ -31,7 +31,10 @@ class RequestLedger(private val store: LedgerStore) {
         }
         // Never hold the journal lock across Android I/O or a wait on the UI thread.
         try {
-            val result = action()
+            val result = try { action() } catch (e: ActionNotPerformed) {
+                ToolResults.failure(e.message ?: "The action was not performed.")
+                    .put("action_performed", false).put("request_id", id)
+            }
             return synchronized(lock) {
                 val record = JSONObject(store.read(id)!!)
                 // An SMS callback may have already recorded a newer outcome.
@@ -40,7 +43,7 @@ class RequestLedger(private val store: LedgerStore) {
                 latest
             }
         } finally {
-            // A failed/interrupted action retains its reservation, never replays.
+            // All outcomes retain their reservation, including definite failures.
             synchronized(lock) { inProgress.remove(id) }
         }
     }

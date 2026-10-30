@@ -6,6 +6,8 @@ Version 0.2.0 uses Material 3 controls, follows the phone's light/dark theme, an
 
 Version 0.3.0 adds automatic Google Messages/SMS routing, explicit optimistic success responses, a visible control banner, and tools to find the phone, get its location, and control Do Not Disturb.
 
+Version 0.3.1 fixes Google Messages title selection when message history is drawn behind the toolbar. It uses the identified title/Send controls on newer Messages versions and the title's avatar control on the older layout, excluding message history and other conversation panes. It reuses and verifies an open conversation, preserves drafts across recipient-details navigation, and waits for draft restoration before editing. A failure before Send is recorded as a definite failure instead of an indeterminate operation.
+
 **Accessibility is mandatory.** Enable Phone Link control before connecting. Revoking Accessibility stops the tunnel. Screen controls and activity launches require an awake, unlocked phone; requests fail with an explanation when the screen is off or the device is locked. There is no per-action confirmation screen added by this app. Android and the destination app can still require user interaction.
 
 ## Install and connect
@@ -68,6 +70,7 @@ The UI flow currently recognizes English Google Messages controls. It fails if i
 - Successful tool calls return `success: true` and `status: "completed"`. For timers, alarms, calls, and app launches, Android accepting the handoff counts as success (`completion_basis: "android_accepted"`). Messages such as “Timer set.” and “Alarm set.” are intended for direct user-facing confirmation, without routine caveats or extra screen checks. This is optimistic success, not a separate observation of the destination app's state.
 - SMS submission also reports optimistic success and “Text sent.” The `sms_status` field distinguishes `submitted` from `sent` after Android callbacks. Later send failures are still surfaced by `operation_status` as `success: false`, `status: "failed"`, with the MCP error flag. Neither submission nor a send callback confirms recipient delivery. SMS does not provide RCS, WhatsApp, or MMS.
 - Explicit tool failures consistently return `success: false`, `status: "failed"`, and an explanation. Journal states `unknown`, `indeterminate`, and `in_progress` return `success: null` instead of inventing a completed action. Older persisted `requested`/`submitted`/`sent` results are normalized to the new format without repeating the action.
+- A Messages failure before the Send action returns `action_performed: false` and is saved with its error. Both `operation_status` and an identical retry return that same failure without executing again. After resolving the cause, an intentional new attempt needs a new request ID. A timeout races an atomic cancellation guard, so a delayed UI callback cannot send after a definite failure is reported. Once Send has started, an unconfirmed result remains `indeterminate`. Older indeterminate records are retained: the update cannot reconstruct what happened during those requests.
 - `set_timer`, `set_alarm`, `send_message`, `send_sms`, `place_call`, `find_phone`, and `set_do_not_disturb` require a unique `request_id` (8–128 ASCII letters, digits, hyphens or underscores). Reuse it only for an identical retry. It is reserved on disk before acting. Retries return the existing result; changed arguments are rejected. After an interrupted operation, **indeterminate** means check the phone before creating a new request ID. Clearing app storage or uninstalling clears this protection.
 - Screen content varies by app. Custom drawing, protected surfaces, secure fields, permission prompts, and lock screens may be unavailable. This app does not unlock the phone or provide arbitrary shell access. Phone Link's own UI is excluded from screen reading, tapping, and text entry.
 - The phone initiates HTTPS polling to `api.openai.com`. The app does not open an HTTP port. One active installation should use a given tunnel ID.
@@ -121,11 +124,14 @@ Source layout:
 - `MainActivity.kt`: Material 3 connection and capability settings.
 - `SmsStatusReceiver.kt`: SMS send-result tracking.
 - `GoogleMessagesSender.kt`: bounded recipient/draft verification and one Send action.
+- `core/MessagesUi.kt`, `core/SendAttempt.kt`: structural Messages selectors and cancellation/send coordination.
 - `FindPhoneSound.kt`, `PhoneLocation.kt`: timed audio playback and location acquisition.
 
 Live ChatGPT connectivity and real SIM behavior require a user-provided tunnel and physical phone. A build, local readiness check, or mock protocol test does not establish that live connection.
 
 ## Verification in this workspace
+
+Version 0.3.1 passed 43 JVM tests and 14 Android integration tests, with zero lint errors (24 warnings). Added tests cover history text behind the title, split-pane recipient selection, modern and legacy Send controls, definite failure persistence, timeout/Send races, error status through MCP, and switching recipients without overwriting the other conversation's draft. Real Google Messages tests intercept the final Send action. Newer UI selectors also use regression fixtures based on the Android 17 phone's observed structure. The 0.3.1 APK still needs installation and a check on the physical phone; USB was disconnected during this fix. Existing indeterminate journal records are not rewritten.
 
 Version 0.3.0 passed 32 JVM tests and 13 Android integration tests, with zero Android lint errors (24 warnings). New coverage includes optimistic result formatting, locked/screen-off routing, no duplicate fallback after a Messages error, real Google Messages recipient/draft checks with the final Send click intercepted, named-contact verification, banner visibility and touch-through behavior, a recent mock location, DND on/off requests, and alarm-volume restoration. The emulator uses Google Messages `messages.android_20240528_00_RC01_alldpi.arm64-v8a.phone`; real RCS/SMS delivery, physical-phone GPS and audible finder playback remain device checks. No test transmits a message or places a call.
 

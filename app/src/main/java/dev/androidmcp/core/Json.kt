@@ -7,7 +7,10 @@ fun obj(vararg entries: Pair<String, Any?>): JSONObject = JSONObject().also { ou
     entries.forEach { (key, value) -> out.put(key, value ?: JSONObject.NULL) }
 }
 fun arr(vararg values: Any?): JSONArray = JSONArray(values.toList())
-class ToolFailure(message: String) : Exception(message)
+open class ToolFailure(message: String) : Exception(message)
+
+/** Only use when the requested external action definitely has not been attempted. */
+class ActionNotPerformed(message: String) : ToolFailure(message)
 
 data class Tool(
     val name: String,

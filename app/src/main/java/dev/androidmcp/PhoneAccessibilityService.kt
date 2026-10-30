@@ -94,7 +94,7 @@ class PhoneAccessibilityService : AccessibilityService() {
         stopService(Intent(this, BridgeService::class.java))
     }
 
-    private fun unlocked() {
+    internal fun unlocked() {
         if (getSystemService(KeyguardManager::class.java).isDeviceLocked)
             throw ToolFailure("The phone is locked. Unlock it before using screen controls or launching an action.")
         if (!getSystemService(android.os.PowerManager::class.java).isInteractive)

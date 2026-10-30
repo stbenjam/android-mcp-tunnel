@@ -25,6 +25,25 @@ class RequestLedgerTest {
         val result = RequestLedger(store).run("sms", args) { fail("Must not repeat"); obj() }
         assertEquals("indeterminate", result.getString("status"))
     }
+    @Test fun definiteFailureIsStoredAndNeverReplayed() {
+        val args = obj("request_id" to "never-sent-request", "text" to "private-body")
+        val result = RequestLedger(store).run("send_message", args) {
+            throw ActionNotPerformed("Conversation details could not be opened. Nothing was sent.")
+        }
+        assertEquals("failed", result.getString("status"))
+        assertFalse(result.getBoolean("success")); assertFalse(result.getBoolean("action_performed"))
+        val restarted = RequestLedger(store)
+        assertEquals(result.toString(), restarted.status("never-sent-request").toString())
+        assertEquals(result.toString(), restarted.run("send_message", args) { fail("Must not retry Send"); obj() }.toString())
+        assertFalse(data.values.single().contains("private-body"))
+    }
+    @Test fun ordinaryToolFailureAfterPossibleSideEffectRemainsIndeterminate() {
+        val args = obj("request_id" to "uncertain-send-request")
+        assertThrows(ToolFailure::class.java) {
+            RequestLedger(store).run("send_message", args) { throw ToolFailure("UI callback timed out") }
+        }
+        assertEquals("indeterminate", RequestLedger(store).status("uncertain-send-request").getString("status"))
+    }
     @Test fun conflictingReuseIsRejectedAndArgumentOrderDoesNotMatter() {
         val ledger = RequestLedger(store)
         ledger.run("sms", obj("request_id" to "same-request", "text" to "one")) { obj("ok" to true) }

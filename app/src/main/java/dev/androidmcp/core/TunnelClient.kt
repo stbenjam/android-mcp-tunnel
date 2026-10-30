@@ -92,7 +92,7 @@ class TunnelClient(
     private fun request(url: HttpUrl): Request.Builder = Request.Builder().url(url)
         .header("Authorization", "Bearer $apiKey")
         .header("X-Tunnel-Client-Name", "android-mcp-tunnel")
-        .header("X-Tunnel-Client-Version", "0.3.0")
+        .header("X-Tunnel-Client-Version", "0.3.1")
         .header("X-Tunnel-Client-Instance-Id", instanceId)
         .header("X-Tunnel-MCP-Server-Info", "{\"version\":1,\"channels\":[{\"name\":\"main\",\"proc_affinity\":true}]}")
 
