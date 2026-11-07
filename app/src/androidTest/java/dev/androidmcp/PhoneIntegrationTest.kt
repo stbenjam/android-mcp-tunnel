@@ -85,12 +85,12 @@ class PhoneIntegrationTest {
         assertFalse(call("device_status").toString().contains(fakeKey))
         state.forget(); assertEquals("", AppState(context).key())
     }
-    @Test fun ownScreenProtectedAndDashboardRenders() {
+    @Test fun ownScreenAllowsCaptureButRejectsMcpControlAndDashboardRenders() {
         state.forget()
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         instrumentation.waitForIdleSync()
         try {
-            assertTrue(activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0)
+            assertEquals(0, activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE)
             val response = server.handle(obj("jsonrpc" to "2.0", "id" to 1, "method" to "tools/call",
                 "params" to obj("name" to "get_screen", "arguments" to obj())))!!.getJSONObject("result")
             assertTrue(response.getBoolean("isError"))

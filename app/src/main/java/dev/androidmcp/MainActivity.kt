@@ -14,7 +14,6 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
-import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.appbar.MaterialToolbar
@@ -48,7 +47,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         state = AppState(this)
         pendingDndEnable = savedInstanceState?.getBoolean("pending_dnd") ?: false
         FindPhoneSound.recoverVolume(this)
@@ -202,7 +200,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.show()
     }
 

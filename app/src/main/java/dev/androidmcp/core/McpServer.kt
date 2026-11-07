@@ -22,7 +22,7 @@ class McpServer(private val tools: List<Tool>) {
             "initialize" -> obj(
                 "protocolVersion" to negotiate(params.optString("protocolVersion")),
                 "capabilities" to obj("tools" to obj("listChanged" to false)),
-                "serverInfo" to obj("name" to "android-mcp-tunnel", "version" to "0.3.2"),
+                "serverInfo" to obj("name" to "android-mcp-tunnel", "version" to "0.3.3"),
                 "instructions" to "Controls the user's Android phone. Check device_status for permissions. " +
                     "Use dedicated tools before UI automation. For side effects, generate a unique request_id and reuse it only " +
                     "to retry the identical operation. Screen actions run in order; independent calls can run concurrently. " +

@@ -6,6 +6,8 @@ Version 0.2.0 uses Material 3 controls, follows the phone's light/dark theme, an
 
 Version 0.3.2 keeps the `send_message` tool name and always sends SMS directly through Android. Google Messages automation and RCS routing have been removed. The visible control banner, explicit success responses, and tools to find the phone, get its location, and control Do Not Disturb remain available.
 
+Version 0.3.3 allows screenshots, screen sharing and recent-app previews throughout Phone Link, including Tunnel settings.
+
 **Accessibility is mandatory.** Enable Phone Link control before connecting. Revoking Accessibility stops the tunnel. Screen controls and activity launches require an awake, unlocked phone; requests fail with an explanation when the screen is off or the device is locked. There is no per-action confirmation screen added by this app. Android and the destination app can still require user interaction.
 
 ## Install and connect
@@ -84,7 +86,7 @@ For USB debugging, `adb logcat -s PhoneLinkTunnel` shows phase names, elapsed mi
 
 ## Privacy and storage
 
-Runtime credentials use AES-GCM with an Android Keystore key. Backup/device transfer are disabled. No raw tunnel traffic, messages, contacts, screen contents, credentials, or phone numbers are written to app logs. The operation journal stores request IDs, argument hashes, and bounded outcomes, not message bodies or numbers. The credential screen blocks screenshots and recent-app previews. Forget connection removes the locally stored credential; revoke the key in Platform to revoke it remotely.
+Runtime credentials use AES-GCM with an Android Keystore key. Backup/device transfer are disabled. No raw tunnel traffic, messages, contacts, screen contents, credentials, or phone numbers are written to app logs. The operation journal stores request IDs, argument hashes, and bounded outcomes, not message bodies or numbers. Screenshots, screen sharing and recent-app previews are allowed throughout Phone Link, including Tunnel settings. The runtime-key field stays masked by default, and saved keys are never prefilled. Forget connection removes the locally stored credential; revoke the key in Platform to revoke it remotely.
 
 Only explicitly requested tool results leave the phone through the tunnel. ChatGPT and OpenAI's normal processing policies still apply to those results.
 
@@ -124,6 +126,8 @@ Source layout:
 Live ChatGPT connectivity and real SIM behavior require a user-provided tunnel and physical phone. A build, local readiness check, or mock protocol test does not establish that live connection.
 
 ## Verification in this workspace
+
+Version 0.3.3 passed 32 JVM tests and 13 Android integration tests, with zero lint errors (20 warnings). Real emulator screenshots of the dashboard and Tunnel settings were captured and visually checked; both show the app content. The existing own-screen integration test now verifies that screenshot blocking is off while MCP self-control remains disabled.
 
 Version 0.3.2 passed 32 JVM tests and 13 Android integration tests, with zero lint errors (24 warnings). The retained `send_message` tool and the `send_sms` compatibility alias both reach the direct SMS backend with Screen control disabled and the screen on or off. The routing checks use invalid recipients and verify persisted preflight failures; no test transmits a message. Google Messages automation and its dedicated tests have been removed.
 
